@@ -1,0 +1,384 @@
+{
+  "name": "Criando Processo de RPA",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "clientes",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        -16
+      ],
+      "id": "e53a82ce-4a90-4da7-a82a-e1956ed30fe9",
+      "name": "Webhook",
+      "webhookId": "a9830cfe-c3a6-4914-9bf0-32ed3b3aa1b4"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "\n{\n  \"sucesso\": true,\n  \"mensagem\": \"Clientes processados com sucesso\",\n  \"total\": \"={{ $input.all().length }}\",\n  \"clientes\": \"={{ $input.all().map(item => item.json) }}\"\n}\n",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        2016,
+        32
+      ],
+      "id": "d031a26c-2cca-4056-a692-7b15b2aa8516",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "url": "https://digitalinnovationone.github.io/dio-lab-assistente-investimentos-rpa-n8n/data.csv",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        208,
+        -16
+      ],
+      "id": "3c3dbd3d-6807-4997-a85d-8e54ff8b603d",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst items = $input.all();\n\nfunction normalizarNumero(valor) {\n  if (typeof valor === 'number') return valor;\n\n  let texto = String(valor ?? '').trim();\n\n  // Formato brasileiro: R$ 12.500,00 -> 12500\n  texto = texto\n    .replace(/R\\$\\s?/gi, '')\n    .replace(/\\s/g, '')\n    .replace(/\\./g, '')\n    .replace(',', '.');\n\n  const numero = Number(texto);\n\n  return Number.isFinite(numero) ? numero : null;\n}\n\nfunction analisarCSV(texto) {\n  // Leitor simples que respeita campos entre aspas e vírgulas\n  const linhas = texto\n    .replace(/^\\uFEFF/, '')\n    .split(/\\r?\\n/)\n    .filter(linha => linha.trim() !== '');\n\n  if (linhas.length < 2) return [];\n\n  function separarLinha(linha) {\n    const resultado = [];\n    let campo = '';\n    let aspas = false;\n\n    for (let i = 0; i < linha.length; i++) {\n      const caractere = linha[i];\n\n      if (caractere === '\"') {\n        if (aspas && linha[i + 1] === '\"') {\n          campo += '\"';\n          i++;\n        } else {\n          aspas = !aspas;\n        }\n      } else if (caractere === ',' && !aspas) {\n        resultado.push(campo.trim());\n        campo = '';\n      } else {\n        campo += caractere;\n      }\n    }\n\n    resultado.push(campo.trim());\n    return resultado;\n  }\n\n  const cabecalhos = separarLinha(linhas[0]).map(c =>\n    c.replace(/^\\uFEFF/, '').trim().toLowerCase()\n  );\n\n  return linhas.slice(1).map(linha => {\n    const valores = separarLinha(linha);\n    const registro = {};\n\n    cabecalhos.forEach((cabecalho, indice) => {\n      registro[cabecalho] = valores[indice] ?? '';\n    });\n\n    // Normaliza colunas comuns de valor/saldo\n    for (const chave of Object.keys(registro)) {\n      if (/saldo|valor|balance|amount/i.test(chave)) {\n        registro[chave] = normalizarNumero(registro[chave]);\n      }\n    }\n\n    return registro;\n  });\n}\n\nreturn items.flatMap(item => {\n  const dados = item.json;\n  \n  // O HTTP Request pode entregar o CSV em diferentes propriedades.\n  const csv = typeof dados === 'string'\n    ? dados\n    : dados.body ?? dados.data ?? dados.csv ?? dados.response ?? null;\n\n  if (typeof csv !== 'string') {\n    throw new Error(\n      'CSV não encontrado como texto. Verifique a saída do HTTP Request e ajuste a propriedade dados.body, dados.data ou dados.csv.'\n    );\n  }\n\n  const registros = analisarCSV(csv);\n\n  return registros.map(registro => ({ json: registro }));\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        416,
+        -16
+      ],
+      "id": "641379f9-c8ef-40ca-971e-3eefb1324079",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        592,
+        -176
+      ],
+      "id": "f4ebac4b-e4a6-45f2-98ad-88c346c6963a",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "\n/**\n * DESAFIO DIO - AUTOMAÇÃO DE INVESTIMENTOS COM N8N\n * Objetivo: gerar mensagens personalizadas conforme o perfil\n * de investimento de cada cliente.\n */\n\n// Recebe os dados de entrada do node anterior\nconst entradas = $input.all();\n\n// Converte saldo em texto para número, se necessário\nfunction converterSaldo(valor) {\n  if (typeof valor === \"number\") {\n    return valor;\n  }\n\n  if (!valor) {\n    return 0;\n  }\n\n  const numero = String(valor)\n    .replace(\"R$\", \"\")\n    .replace(/\\./g, \"\")\n    .replace(\",\", \".\")\n    .trim();\n\n  return Number(numero) || 0;\n}\n\n// Formata o saldo em reais\nfunction formatarSaldo(valor) {\n  return valor.toLocaleString(\"pt-BR\", {\n    style: \"currency\",\n    currency: \"BRL\"\n  });\n}\n\n// Cria uma orientação educativa conforme o perfil\nfunction gerarOrientacao(perfil, nome, saldo) {\n  const perfilNormalizado = String(perfil || \"\")\n    .normalize(\"NFD\")\n    .replace(/[\\u0300-\\u036f]/g, \"\")\n    .toLowerCase()\n    .trim();\n\n  let mensagem;\n  let caracteristicas;\n  let exemplos;\n  let cuidados;\n\n  if (perfilNormalizado.includes(\"conservador\")) {\n    caracteristicas =\n      \"Você tende a priorizar a segurança do dinheiro e a estabilidade, \" +\n      \"aceitando menor potencial de retorno em troca de menor oscilação.\";\n\n    exemplos =\n      \"Como exemplos para estudar, existem o Tesouro Selic e CDBs \" +\n      \"de instituições financeiras cobertos pelo FGC, observadas as regras e os limites da garantia.\";\n\n    cuidados =\n      \"Antes de investir, confira liquidez, taxas, tributação, prazo e riscos. \" +\n      \"Mantenha uma reserva de emergência acessível.\";\n\n    mensagem =\n      `Olá, ${nome}! Considerando seu perfil conservador e seu saldo de ` +\n      `${formatarSaldo(saldo)}, vale priorizar o estudo de alternativas ` +\n      `que busquem preservar seu dinheiro e ofereçam previsibilidade. ` +\n      `${caracteristicas} ${exemplos} ${cuidados} ` +\n      `Esta é uma orientação educativa, não uma recomendação financeira individual.`;\n\n  } else if (perfilNormalizado.includes(\"moderado\")) {\n    caracteristicas =\n      \"Você pode buscar equilíbrio entre segurança e crescimento, \" +\n      \"considerando que alguns investimentos apresentam oscilações.\";\n\n    exemplos =\n      \"Para estudar, compare opções de renda fixa, como Tesouro Direto e CDBs, \" +\n      \"com alternativas diversificadas de maior risco, de acordo com seus objetivos e prazo.\";\n\n    cuidados =\n      \"Avalie a diversificação, a liquidez, as taxas e sua capacidade de suportar perdas. \" +\n      \"Não invista em ativos voláteis o dinheiro necessário no curto prazo.\";\n\n    mensagem =\n      `Olá, ${nome}! Com seu perfil moderado e saldo de ` +\n      `${formatarSaldo(saldo)}, você pode estudar estratégias que equilibrem ` +\n      `estabilidade e potencial de crescimento. ${caracteristicas} ` +\n      `${exemplos} ${cuidados} ` +\n      `Esta é uma orientação educativa, não uma recomendação financeira individual.`;\n\n  } else if (perfilNormalizado.includes(\"arrojado\")) {\n    caracteristicas =\n      \"Você demonstra maior disposição para aceitar oscilações em busca de crescimento, \" +\n      \"mas isso não elimina o risco de perdas.\";\n\n    exemplos =\n      \"Como temas de estudo, considere a diversificação entre renda fixa e renda variável, \" +\n      \"incluindo fundos de índice (ETFs) e ações, sempre compreendendo os riscos de cada ativo.\";\n\n    cuidados =\n      \"Considere seu horizonte de longo prazo, diversifique e evite concentrar \" +\n      \"todo o dinheiro em um único ativo. Retornos não são garantidos.\";\n\n    mensagem =\n      `Olá, ${nome}! Considerando seu perfil arrojado e seu saldo de ` +\n      `${formatarSaldo(saldo)}, vale estudar estratégias diversificadas ` +\n      `com potencial de crescimento no longo prazo. ${caracteristicas} ` +\n      `${exemplos} ${cuidados} ` +\n      `Esta é uma orientação educativa, não uma recomendação financeira individual.`;\n\n  } else {\n    mensagem =\n      `Olá, ${nome}! Recebemos seu saldo de ${formatarSaldo(saldo)}, ` +\n      `mas não identificamos seu perfil de investimento. ` +\n      `Antes de estudar alternativas, procure definir seus objetivos, ` +\n      `prazo, necessidade de liquidez e tolerância a riscos.`;\n  }\n\n  return mensagem;\n}\n\n// Processa cada cliente, inclusive quando todos chegam\n// dentro de um único array chamado \"clientes\".\nconst clientes = [];\n\nfor (const item of entradas) {\n  const dados = item.json;\n\n  if (Array.isArray(dados.clientes)) {\n    clientes.push(...dados.clientes);\n  } else if (Array.isArray(dados.body?.clientes)) {\n    clientes.push(...dados.body.clientes);\n  } else {\n    clientes.push(dados);\n  }\n}\n\n// Gera um item de saída para cada cliente\nreturn clientes.map((cliente) => {\n  const nome = cliente.nome || \"Cliente\";\n  const email = cliente.email || \"\";\n  const saldo = converterSaldo(cliente.saldo);\n  const perfil = cliente.perfil || \"Não informado\";\n\n  const mensagem = gerarOrientacao(perfil, nome, saldo);\n\n  return {\n    json: {\n      nome,\n      email,\n      saldo: formatarSaldo(saldo),\n      perfil,\n      mensagem\n    }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        752,
+        -16
+      ],
+      "id": "8a2f368f-5a7d-4e26-b5a0-d68c7f35268e",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "jsCode": "\n/**\n * DESAFIO DIO - RELATÓRIO DE CLIENTES\n * Organiza os dados em tabela com HTML e resumo em JSON.\n */\n\nconst entradas = $input.all();\n\n// Escapa caracteres especiais para evitar problemas no HTML\nfunction escaparHTML(valor) {\n  return String(valor ?? \"\")\n    .replace(/&/g, \"&amp;\")\n    .replace(/</g, \"&lt;\")\n    .replace(/>/g, \"&gt;\")\n    .replace(/\"/g, \"&quot;\")\n    .replace(/'/g, \"&#39;\");\n}\n\n// Formata valores monetários\nfunction formatarSaldo(valor) {\n  if (typeof valor === \"number\") {\n    return valor.toLocaleString(\"pt-BR\", {\n      style: \"currency\",\n      currency: \"BRL\"\n    });\n  }\n\n  const texto = String(valor ?? \"R$ 0,00\").trim();\n\n  // Mantém valores que já estão formatados em reais\n  if (texto.includes(\"R$\")) {\n    return texto;\n  }\n\n  const numero = Number(\n    texto.replace(/\\./g, \"\").replace(\",\", \".\")\n  );\n\n  return Number.isFinite(numero)\n    ? numero.toLocaleString(\"pt-BR\", {\n        style: \"currency\",\n        currency: \"BRL\"\n      })\n    : texto;\n}\n\n// Aceita itens individuais ou uma lista dentro de \"clientes\"\nconst clientes = [];\n\nfor (const item of entradas) {\n  const dados = item.json;\n\n  if (Array.isArray(dados.clientes)) {\n    clientes.push(...dados.clientes);\n  } else if (Array.isArray(dados.body?.clientes)) {\n    clientes.push(...dados.body.clientes);\n  } else {\n    clientes.push(dados);\n  }\n}\n\n// Prepara os dados de cada cliente\nconst relatorio = clientes.map((cliente, indice) => ({\n  numero: indice + 1,\n  nome: cliente.nome || \"Não informado\",\n  email: cliente.email || \"Não informado\",\n  perfil: cliente.perfil || \"Não informado\",\n  saldo: formatarSaldo(\n    cliente.saldo ?? cliente.saldoFormatado ?? 0\n  ),\n  mensagem: cliente.mensagem || \"Mensagem não disponível\"\n}));\n\n// Cria as linhas da tabela HTML\nconst linhasHTML = relatorio.map(cliente => `\n  <tr>\n    <td>${cliente.numero}</td>\n    <td>${escaparHTML(cliente.nome)}</td>\n    <td>${escaparHTML(cliente.email)}</td>\n    <td>${escaparHTML(cliente.perfil)}</td>\n    <td>${escaparHTML(cliente.saldo)}</td>\n    <td>${escaparHTML(cliente.mensagem)}</td>\n  </tr>\n`).join(\"\");\n\n// Monta o relatório completo\nconst html = `\n<!DOCTYPE html>\n<html lang=\"pt-BR\">\n<head>\n  <meta charset=\"UTF-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n  <title>Relatório de Clientes</title>\n  <style>\n    body {\n      font-family: Arial, sans-serif;\n      color: #222;\n      margin: 24px;\n    }\n    h1 {\n      color: #17365d;\n      text-align: center;\n    }\n    .resumo {\n      margin: 20px 0;\n      padding: 15px;\n      background: #f1f5f9;\n      border-radius: 8px;\n    }\n    .tabela-container {\n      overflow-x: auto;\n    }\n    table {\n      width: 100%;\n      border-collapse: collapse;\n      font-size: 14px;\n    }\n    th, td {\n      border: 1px solid #d1d5db;\n      padding: 10px;\n      text-align: left;\n      vertical-align: top;\n    }\n    th {\n      background: #17365d;\n      color: white;\n    }\n    tbody tr:nth-child(even) {\n      background: #f8fafc;\n    }\n    td:last-child {\n      min-width: 320px;\n      line-height: 1.5;\n    }\n  </style>\n</head>\n<body>\n  <h1>Relatório de Clientes e Perfis de Investimento</h1>\n\n  <div class=\"resumo\">\n    <strong>Total de clientes:</strong> ${relatorio.length}\n  </div>\n\n  <div class=\"tabela-container\">\n    <table>\n      <thead>\n        <tr>\n          <th>Nº</th>\n          <th>Nome</th>\n          <th>E-mail</th>\n          <th>Tipo de investidor</th>\n          <th>Saldo</th>\n          <th>Mensagem personalizada</th>\n        </tr>\n      </thead>\n      <tbody>\n        ${linhasHTML}\n      </tbody>\n    </table>\n  </div>\n</body>\n</html>\n`;\n\n// Retorna um item contendo o relatório organizado\nreturn [{\n  json: {\n    titulo: \"Relatório de Clientes\",\n    totalClientes: relatorio.length,\n    clientes: relatorio,\n    tabelaHTML: html\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        976,
+        -16
+      ],
+      "id": "f6730071-2557-4418-a60b-09cc0c551389",
+      "name": "Code in JavaScript2"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o",
+          "mode": "list",
+          "cachedResultName": "GPT-4O",
+          "cachedResultUrl": ""
+        },
+        "responses": {
+          "values": [
+            {
+              "content": "=Você é um assistente especializado em educação financeira, com foco em explicar conceitos de investimento de forma clara, responsável e personalizada.\n\nAnalise os dados do cliente abaixo:\n\n**Nome:** {{ $json.nome }}  \n**Perfil de investidor:** {{ $json.perfil }}  \n**Saldo disponível:** {{ $json.saldo }}\n\nCrie uma mensagem individual em português brasileiro, personalizada de acordo com o perfil de investidor do cliente.\n\nNa mensagem:\n- Cumprimente o cliente pelo nome.\n- Explique as principais características do seu perfil de investidor.\n- Apresente alternativas de investimento apenas como exemplos educativos, adequados para estudo conforme o perfil informado.\n- Explique a importância de avaliar riscos, liquidez, taxas, tributação, prazo e diversificação.\n- Considere que todo investimento envolve riscos, em diferentes níveis.\n- **Nunca prometa ganhos, lucros, rendimentos ou rentabilidade.**\n- **Nunca garanta retorno financeiro nem afirme que o cliente ganhará dinheiro.**\n- Não utilize expressões como “lucro garantido”, “ganho certo”, “retorno garantido” ou “rendimento sem risco”.\n- Não apresente rentabilidades futuras como certas ou previsíveis.\n- Não incentive o cliente a investir todo o seu saldo em um único produto.\n- Não recomende um investimento específico como se fosse necessariamente adequado ao cliente apenas com base no saldo e no perfil informado.\n- Não invente informações pessoais, objetivos financeiros ou conhecimentos que não foram fornecidos.\n- Esclareça, de maneira natural, que o conteúdo é educativo e não constitui uma recomendação financeira individual.\n\nFinalize com uma orientação responsável, incentivando o cliente a conhecer os riscos e avaliar seus objetivos antes de tomar decisões financeiras.\n\nRetorne somente a mensagem personalizada, incluindo uma saudação com o nome do cliente. Não inclua títulos técnicos, explicações sobre o prompt ou comentários adicionais."
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        1120,
+        128
+      ],
+      "id": "aa7ac741-2705-4db6-871b-b4d81cba09dc",
+      "name": "Message a model",
+      "credentials": {
+        "openAiApi": {
+          "id": "E7OabjVzxUy5R4F7",
+          "name": "OpenAI account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-flash-latest",
+          "mode": "list",
+          "cachedResultName": "models/gemini-flash-latest"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "\nVocê é um assistente que explica conceitos de educação financeira.\n\nAnalise os dados do cliente abaixo:\nNome: {{ $json.nome }}\nPerfil de investidor: {{ $json.perfil }}\nSaldo disponível: {{ $json.saldo }}\n\nCrie uma mensagem individual em português brasileiro.\nExplique as características do perfil do cliente e apresente\nalternativas de investimento apenas como exemplos educativos.\nConsidere os riscos, a liquidez e a importância da diversificação.\nNão prometa rentabilidade nem indique que um investimento é garantido.\nNão invente informações sobre o cliente.\n\nRetorne somente a mensagem personalizada, incluindo uma saudação\ncom o nome do cliente.\n"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        1152,
+        -176
+      ],
+      "id": "56523ea0-4efc-4e06-b986-47b248394fe3",
+      "name": "Message a model1",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "Zq0mpkYM4etKmDZU",
+          "name": "Google Gemini(PaLM) Api account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\n/**\n * DIO - RELATÓRIO DE E-MAILS\n * Gera uma tabela HTML e prepara um item por cliente para o Gmail.\n */\n\nconst entradas = $input.all();\n\nfunction escaparHTML(valor) {\n  return String(valor ?? \"\")\n    .replace(/&/g, \"&amp;\")\n    .replace(/</g, \"&lt;\")\n    .replace(/>/g, \"&gt;\")\n    .replace(/\"/g, \"&quot;\")\n    .replace(/'/g, \"&#39;\");\n}\n\nfunction obterTexto(dados) {\n  const possiveis = [\n    dados.body,\n    dados.mensagem,\n    dados.text,\n    dados.output_text,\n    dados.message?.content,\n    dados.response?.text\n  ];\n\n  const valor = possiveis.find(v => v !== undefined && v !== null);\n\n  if (typeof valor === \"string\") return valor.trim();\n\n  if (Array.isArray(valor)) {\n    return valor.map(p =>\n      typeof p === \"string\" ? p : p.text ?? p.content ?? \"\"\n    ).join(\"\\n\").trim();\n  }\n\n  if (valor && typeof valor === \"object\") {\n    return valor.text ?? valor.content ?? JSON.stringify(valor);\n  }\n\n  return \"\";\n}\n\nfunction formatarSaldo(valor) {\n  if (typeof valor === \"number\") {\n    return valor.toLocaleString(\"pt-BR\", {\n      style: \"currency\",\n      currency: \"BRL\"\n    });\n  }\n\n  return String(valor ?? \"Não informado\");\n}\n\n// Cada entrada deve representar um cliente.\n// Se os clientes estiverem dentro de um array, separa-os.\nconst clientes = [];\n\nfor (const item of entradas) {\n  const dados = item.json;\n\n  if (Array.isArray(dados.clientes)) {\n    clientes.push(...dados.clientes);\n  } else if (Array.isArray(dados.body?.clientes)) {\n    clientes.push(...dados.body.clientes);\n  } else {\n    clientes.push(dados);\n  }\n}\n\n// Padroniza os campos para o Gmail\nconst emails = clientes.map((cliente, indice) => {\n  const nome = cliente.nome || \"Cliente\";\n  const to = String(cliente.to ?? cliente.email ?? \"\").trim();\n  const perfil = cliente.perfil || \"Não informado\";\n  const saldo = formatarSaldo(cliente.saldo ?? cliente.saldoFormatado);\n\n  const body = obterTexto(cliente);\n\n  const subject = cliente.subject ||\n    `Orientações educativas de investimento - ${nome}`;\n\n  const emailValido = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(to);\n\n  return {\n    numero: indice + 1,\n    nome,\n    to,\n    perfil,\n    saldo,\n    subject,\n    body,\n    emailValido,\n    prontoParaEnvio: emailValido && body.length > 0\n  };\n});\n\n// Constrói a tabela HTML\nconst linhas = emails.map(e => `\n  <tr>\n    <td>${e.numero}</td>\n    <td>${escaparHTML(e.nome)}</td>\n    <td>${escaparHTML(e.to)}</td>\n    <td>${escaparHTML(e.perfil)}</td>\n    <td>${escaparHTML(e.saldo)}</td>\n    <td>${escaparHTML(e.subject)}</td>\n    <td>${escaparHTML(e.body || \"Mensagem não encontrada\")}</td>\n    <td>${e.prontoParaEnvio ? \"Pronto para envio\" : \"Revisar\"}</td>\n  </tr>\n`).join(\"\");\n\nconst tabelaHTML = `\n<!DOCTYPE html>\n<html lang=\"pt-BR\">\n<head>\n<meta charset=\"UTF-8\">\n<title>Relatório de e-mails dos clientes</title>\n<style>\n  body { font-family: Arial, sans-serif; margin: 20px; color: #222; }\n  h1 { color: #17365d; }\n  .resumo { padding: 12px; background: #eef3f8; margin-bottom: 16px; }\n  .tabela { overflow-x: auto; }\n  table { width: 100%; border-collapse: collapse; font-size: 13px; }\n  th, td { border: 1px solid #ccc; padding: 9px; text-align: left; vertical-align: top; }\n  th { background: #17365d; color: white; }\n  tr:nth-child(even) { background: #f5f7fa; }\n  td:nth-child(7) { min-width: 300px; white-space: pre-wrap; }\n</style>\n</head>\n<body>\n  <h1>Relatório de e-mails dos clientes</h1>\n  <div class=\"resumo\">\n    <strong>Total de clientes:</strong> ${emails.length}\n    &nbsp; | &nbsp;\n    <strong>Prontos para envio:</strong> ${emails.filter(e => e.prontoParaEnvio).length}\n    &nbsp; | &nbsp;\n    <strong>Revisar:</strong> ${emails.filter(e => !e.prontoParaEnvio).length}\n  </div>\n  <div class=\"tabela\">\n    <table>\n      <thead>\n        <tr>\n          <th>Nº</th><th>Nome</th><th>E-mail</th>\n          <th>Perfil</th><th>Saldo</th><th>Assunto</th>\n          <th>Mensagem</th><th>Status</th>\n        </tr>\n      </thead>\n      <tbody>${linhas}</tbody>\n    </table>\n  </div>\n</body>\n</html>\n`;\n\n// Retorna a tabela e a lista de e-mails em um único item.\n// Use a saída \"emails\" para conferir os destinatários.\n// Para enviar um por vez, use o node seguinte para dividir a lista.\nreturn [{\n  json: {\n    totalClientes: emails.length,\n    prontosParaEnvio: emails.filter(e => e.prontoParaEnvio).length,\n    precisamRevisao: emails.filter(e => !e.prontoParaEnvio).length,\n    emails,\n    tabelaHTML\n  }\n}];\n\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        32
+      ],
+      "id": "77169b6e-1bc6-45b8-890d-46a1d9435be6",
+      "name": "Code in JavaScript3"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.emails[0].to }}",
+        "subject": "={{ $json.emails[0].subject }}",
+        "message": "={{ $json.tabe$json.emails[0].bodylaHTML }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1872,
+        32
+      ],
+      "id": "2f0b1fe9-6181-40ef-b764-dbea72b7c758",
+      "name": "Send a message",
+      "webhookId": "e10e4166-d766-4a9b-b990-cdf3ce55c024",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "wHpQwLQ3UtDjrNie",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "99f4d435-bcb2-41e3-adfc-64532f99416c",
+              "leftValue": "={{ $json.emails[0].to }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "regex"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1664,
+        32
+      ],
+      "id": "105c08df-b069-487c-a1a8-49f1305533f5",
+      "name": "If"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond to Webhook": {
+      "main": [
+        []
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "Message a model1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        []
+      ]
+    },
+    "Message a model1": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript3": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "5dc84653-dfeb-4543-9764-ba07ef682ac1",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "62725f1860756abeca95c640c2e981675ebd7da753ccfc01d6c99b575989aa74"
+  },
+  "nodeGroups": [],
+  "id": "Xg8K22WzXqWQluML",
+  "tags": []
+}
